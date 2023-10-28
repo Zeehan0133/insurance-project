@@ -1,54 +1,92 @@
-node{
-    def mavenHome
-    def mavenCMD
-    def docker
-    def dockerCMD
-    def tagName
-    stage('Prepare environment')
-       echo "initialise all variable"
-        mavenHome = tool name: 'maven' , type: 'maven'
-        mavenCMD ="${mavenHome}/bin/mvn"
-        docker = tool name: 'docker' , type: 'org.jenkinsci.plugins.docker.commons.tools.DockerTool'
-        dockerCMD = "${docker}/bin/docker"
-        tagName="1.0"
-        
-    stage('Code Checkout')
-       try{
-        echo "checkout from git repo"
-        git 'https://github.com/vikulrepo/insurance-project.git'
-        }
-       catch(Exception e){
-            echo 'Exception occured in Git Code Checkout Stage'
-            currentBuild.result = "FAILURE"
-            emailext body: '''Dear All,
-            The Jenkins job ${JOB_NAME} has been failed. Request you to please have a look at it immediately by clicking on the below link. 
-            ${BUILD_URL}''', subject: 'Job ${JOB_NAME} ${BUILD_NUMBER} is failed', to: 'vikul@gmail.com'
-        }
-      stage('Build the Application'){
-        echo "Cleaning... Compiling...Testing... Packaging..."
-        //sh 'mvn clean package'
-        sh "${mavenCMD} clean package"     
+pipeline {
+    agent { label 'javaslave1' }
+
+    tools {
+        maven "maven_3.6.3"
     }
-      stage('publish the report'){
-          echo "generating test reports"
-          publishHTML([allowMissing: false, alwaysLinkToLastBuild: false, keepAll: false, reportDir: '/var/lib/jenkins/workspace/insureme project/target/surefire-reports', reportFiles: 'index.html', reportName: 'HTML Report', reportTitles: '', useWrapperFileDirectly: true])
-      }
-      stage('Containerise the application'){
-          echo "making the image out of the application"
-          sh "${dockerCMD} build -t vikuldocker/insureme:${tagName} . "
-      }
-      stage('Pushing it ot the DockerHub'){
-        echo 'Pushing the docker image to DockerHub'
-        withCredentials([string(credentialsId: 'dockerhubpassword', variable: 'dockerhubpassword')]) {
-            sh "${dockerCMD} login -u vikuldocker -p ${dockerhubpassword}"
-            sh "${dockerCMD} push vikuldocker/insureme:${tagName}"
-      }
 
-      stage('Configure and Deploy to the test-serverusing ansible'){  
-          ansiblePlaybook become: true, credentialsId: 'ansible-key', disableHostKeyChecking: true, installation: 'ansible', inventory: '/etc/ansible/hosts', playbook: 'ansible-playbook.yml'
-      }
+    environment {
+        DOCKERHUB_CREDENTIALS = credentials('dockerlogin')
+    }
 
+    stages {
+        stage('SCM_Checkout') {
+            steps {
+                echo 'Perform SCM Checkout'
+                git 'https://github.com/Zeehan0133/star-agile-insurance-project.git'
+            }
+        }
+
+        stage('Application_Build') {
+            steps {
+                echo 'Perform Maven Build'
+                sh 'mvn -Dmaven.test.failure.ignore=true clean package'
+            }
+            post {
+                failure {
+                    sh "echo 'Send mail on failure'"
+                    mail to: "zyne0133@gmail.com", from: 'zyne0133@gmail.com', subject: "FAILURE: ${currentBuild.fullDisplayName}", body: "Build failed."
+                }
+            }
+        }
+
+        stage('Build Docker Image') {
+            steps {
+                sh 'docker version'
+                sh "docker build -t zeehan0133/insurance-project:V${BUILD_NUMBER} ."
+                sh 'docker image list'
+                sh "docker tag zeehan0133/insurance-project:V${BUILD_NUMBER} zeehan0133/insurance-project:latest"
+            }
+            post {
+                success {
+                    sh "echo 'Send mail docker Build Success'"
+                    mail to: "zyne0133@gmail.com", from: 'zyne0133@gmail.com', subject: "App Image Created Please validate", body: "App Image Created Please validate - zeehan0133/bankapp-zee-app:V${BUILD_NUMBER}"
+                }
+                failure {
+                    sh "echo 'Send mail docker Build failure'"
+                    mail to: "zyne0133@gmail.com", from: 'zyne0133@gmail.com', subject: "FAILURE: ${currentBuild.fullDisplayName}", body: "Image Build failed."
+                }
+            }
+        }
+
+        stage('Approve - push Image to Docker Hub') {
+            steps {
+                //----------------send an approval prompt-------------
+                script {
+                    env.APPROVED_DEPLOY = input message: 'User input required Choose "Yes" | "Abort"'
+                }
+                //-----------------end approval prompt------------
+            }
+        }
+
+        stage('Login to Docker Hub') {
+            steps {
+                sh 'echo $DOCKERHUB_CREDENTIALS_PSW | docker login -u $DOCKERHUB_CREDENTIALS_USR --password-stdin'
+            }
+        }
+
+        stage('Publish to Docker Registry') {
+            steps {
+                sh "docker push zeehan0133/insurance-project:latest"
+            }
+        }
+
+        stage('Approve - Deployment') {
+            steps {
+                //----------------send an approval prompt-------------
+                script {
+                    env.APPROVED_DEPLOY = input message: 'User input required Choose "Yes" | "Abort"'
+                }
+                //-----------------end approval prompt------------
+            }
+        }
+
+        stage('Deploy to ansible target node') {
+            steps {
+                script {
+                    ansiblePlaybook become: true, credentialsId: 'ansible-credential', disableHostKeyChecking: true, installation: 'ansible', inventory: '/etc/ansible/hosts', playbook: 'ansible-playbook.yml'
+                }
+            }
+        }
+    }
 }
-}
-
-
