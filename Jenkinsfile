@@ -13,7 +13,7 @@ pipeline {
         stage('SCM_Checkout') {
             steps {
                 echo 'Perform SCM Checkout'
-                git 'https://github.com/Zeehan0133/star-agile-insurance-project.git'
+                git 'https://github.com/Zeehan0133/insurance-project.git'
             }
         }
 
